@@ -1,0 +1,52 @@
+---
+- name: Create CoreDNS directories
+  file:
+    path: "{{ lookup('env', 'WORKING_DIR') }}/{{ item }}"
+    state: directory
+  with_items:
+    - coredns
+    - coredns/zones
+
+- name: Generate zone file
+  become: yes
+  template:
+    src: db.test.metal3.org.j2
+    dest: "{{ lookup('env', 'WORKING_DIR') }}/coredns/zones/db.test.metal3.org"
+
+- name: Generate CoreDNS configuration
+  become: yes
+  template:
+    src: corefile.j2
+    dest: "{{ lookup('env', 'WORKING_DIR') }}/coredns/corefile"
+
+- name: Create CoreDNS container
+  become: yes
+  vars:
+    container_image: "{{ coredns_image }}"
+    container_name: "{{ coredns_container_name }}"
+    container_state: running
+    container_run_args: >-
+      --network=none
+      --volume "{{ lookup('env', 'WORKING_DIR') }}/coredns:/etc/coredns:z"
+  import_role:
+    name: ikke_t.podman_container_systemd
+    
+- name: Gather CoreDNS container data
+  become: yes
+  command:
+    argv: 
+      - podman
+      - inspect
+      - "{{ coredns_container_name }}"
+  register: coredns_inspect
+
+- name: Set CoreDNS container facts
+  set_fact:
+    coredns_container: "{{ coredns_inspect.stdout | from_json }}"
+
+- name: Link CoreDNS pod netns to /var/run for ip netns
+  file: 
+    force: yes
+    src: "/proc/{{ coredns_container[0].State.Pid }}/ns/net"
+    dest: /var/run/netns/metal3-dns
+    state: link

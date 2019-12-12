@@ -1,0 +1,8 @@
+---
+- name: Provision CoreDNS pod
+  hosts: localhost
+  tasks:
+    - name: Create CoreDNS pod
+      import_role:
+        name: external_dns
+        tasks_from: cleanup_pods.yml

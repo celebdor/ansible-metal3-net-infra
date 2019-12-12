@@ -1,0 +1,6 @@
+. {
+	auto {{ cluster_name }}{{ domain }}. {
+		directory /etc/coredns/zones
+	}
+	forward . /etc/resolv.conf
+}

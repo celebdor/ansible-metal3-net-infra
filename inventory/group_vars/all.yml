@@ -1,0 +1,5 @@
+ns_address: 192.168.111.253
+coredns_image: quay.io/openshift/origin-coredns
+coredns_container_name: metal3-coredns-daemon
+domain: metalkube.org
+cluster_name: test

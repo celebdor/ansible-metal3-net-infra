@@ -1,0 +1,39 @@
+$ORIGIN {{ cluster_name }}{{ domain }}.
+$TTL 1D
+{{ cluster_name }}{{ domain }}.  IN SOA  ns.metal3.org. (
+            2019052001  ; serial
+            1D          ; refresh
+            2H          ; retry
+            1W          ; expiry
+            2D )        ; minimum
+
+{{ cluster_name }}{{ domain }}.   IN NS       ns
+@                  IN A        {{ ns_address }}
+
+; self
+ns          IN A        {{ ns_address }}
+
+; OCP Cluster
+bootstrap   IN A        192.168.1.10
+
+master-0    IN A        192.168.111.20
+master-1    IN A        192.168.111.21
+master-2    IN A        192.168.111.22
+
+worker-0    IN A        192.168.111.51
+worker-1    IN A        192.168.111.52
+worker-2    IN A        192.168.111.53
+
+etcd-0      IN A        192.168.111.20
+etcd-1      IN A        192.168.111.21
+etcd-2      IN A        192.168.111.22
+
+_etcd-server-ssl._tcp.{{ cluster_name }}{{ domain }}.  IN SRV  0   0   2380    etcd-0.{{ cluster_name }}{{ domain }}.
+                                            IN SRV  0   0   2380    etcd-1.{{ cluster_name }}{{ domain }}.
+                                            IN SRV  0   0   2380    etcd-2.{{ cluster_name }}{{ domain }}.
+
+api         IN CNAME    lb-ext  ; external LB interface
+api-int     IN CNAME    lb      ; internal LB interface
+
+apps        IN CNAME    lb-ext
+*.apps      IN CNAME    lb-ext 

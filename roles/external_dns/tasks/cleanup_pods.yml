@@ -1,0 +1,31 @@
+---
+- name: Delete CoreDNS directories
+  file:
+    path: "{{ lookup('env', 'WORKING_DIR') }}/coredns"
+    state: absent
+
+- name: Gather CoreDNS container data
+  become: yes
+  command:
+    argv: 
+      - podman
+      - inspect
+      - "{{ coredns_container_name }}"
+  register: coredns_inspect
+
+- name: Set CoreDNS container facts
+  set_fact:
+    coredns_container: "{{ coredns_inspect.stdout | from_json }}"
+
+- name: Create CoreDNS container
+  become: yes
+  vars:
+    container_name: "{{ coredns_container_name }}"
+    container_state: absent
+  import_role:
+    name: ikke_t.podman_container_systemd
+    
+- name: Link CoreDNS pod netns to /var/run for ip netns
+  file: 
+    path: /var/run/netns/metal3-dns
+    state: absent
