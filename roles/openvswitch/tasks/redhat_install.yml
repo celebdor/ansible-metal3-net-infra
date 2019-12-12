@@ -1,0 +1,16 @@
+---
+- name: Install OpenvSwitch
+  package:
+    name: openvswitch
+    state: present
+
+- name: Enable OVS services
+  systemd:
+    name: "{{ item }}"
+    enabled: yes
+    masked: no
+    state: started
+  with_items:
+    - openvswitch
+    - ovsdb-server
+    - ovs-vswitchd

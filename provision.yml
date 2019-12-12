@@ -1,4 +1,11 @@
 ---
+- name: Set up OpenvSwitch
+  hosts: localhost
+  tasks:
+    - name: Install OpenvSwitch
+      import_role:
+        name: openvswitch
+        tasks_from: install.yml
 - name: Provision CoreDNS pod
   hosts: localhost
   tasks:
