@@ -6,3 +6,11 @@
       import_role:
         name: external_dns
         tasks_from: cleanup_pods.yml
+
+- name: Teardown OpenvSwitch
+  hosts: localhost
+  tasks:
+    - import_role:
+        name: openvswitch
+        tasks_from: teardown.yml
+

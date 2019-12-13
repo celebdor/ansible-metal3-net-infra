@@ -6,6 +6,14 @@
       import_role:
         name: openvswitch
         tasks_from: install.yml
+
+- name: Set up OpenvSwitch ports
+  hosts: localhost
+  tasks:
+    - import_role:
+        name: openvswitch
+        tasks_from: setup.yml
+
 - name: Provision CoreDNS pod
   hosts: localhost
   tasks:

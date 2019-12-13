@@ -1,0 +1,16 @@
+---
+- name: Delete ports
+  openvswitch_port:
+    bridge: "{{ item.bridge }}"
+    port: "{{ item.port }}"
+    state: absent
+  with_items:
+    - { bridge: "metal3", port: "externalgw" }
+    - { bridge: "metal3", port: "m3dnsprov" }
+    - { bridge: "metal3", port: "m3dnsext" }
+
+- name: Delete the bridge
+  openvswitch_bridge:
+    bridge: metal3
+    state: absent
+

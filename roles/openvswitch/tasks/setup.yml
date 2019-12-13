@@ -1,0 +1,28 @@
+---
+- name: Create ports
+  openvswitch_port:
+    bridge: "{{ item.bridge }}"
+    port: "{{ item.port }}"
+    tag: "{{ item.tag | default('0') }}"
+    state: present
+    set: Interface {{ item.port }} type=internal
+  with_items:
+    - { bridge: "metal3", port: "externalgw", tag: "2" }
+    - { bridge: "metal3", port: "m3dnsprov" }
+    - { bridge: "metal3", port: "m3dnsext", tag: "2" }
+
+- name: Add address to port
+  command: ip addr add 192.168.111.1/24 dev externalgw
+  when: hostvars[inventory_hostname].ansible_externalgw.ipv4.address is not defined
+
+- name: Set link up
+  command: ip link set externalgw up
+
+- name: NAT the interface
+  iptables:
+    action: append
+    chain: POSTROUTING
+    table: nat
+    out_interface: metal3
+    jump: MASQUERADE
+
