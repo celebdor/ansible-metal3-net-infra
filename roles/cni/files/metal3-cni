@@ -1,12 +1,56 @@
 #!/bin/bash -e
 
-if [[ $DEBUG -ne 0 ]]; then
-	set -x;
-fi
+function connect() {
+	declare -r net_name="$1"
+	declare -r cni_iface_name="$2"
+
+	declare -r host_veth_name="m3${net_name:0:1}h${CNI_CONTAINERID:0:10}"
+	declare -r container_veth_name="m3${net_name:0:1}c${CNI_CONTAINERID:0:10}"
+
+	declare -r short_net_name="${net_name:0:3}"
+	declare -r vlan_varname="${short_net_name^^}_VLAN"
+	declare -r cidr_varname="${short_net_name}_iface_cidr"
+	declare -r gw_varname="${short_net_name}_iface_gw"
+
+	# Set netns link for iproute
+	mkdir -p /var/run/netns
+	ln -sfT "$CNI_NETNS" "/run/netns/${CNI_CONTAINERID}"
+
+	# Create veth and network it
+	ip link add "$host_veth_name" type veth peer name "$container_veth_name"
+	ip link set "$container_veth_name" netns "$CNI_CONTAINERID"
+	port_addition_args=("$bridge" "$host_veth_name")
+	if [[ -n "${!vlan_varname}" ]]; then
+		port_addition_args+=("tag=${!vlan_varname}")
+	fi
+	ovs-vsctl add-port "${port_addition_args[@]}"
+	ip netns exec "$CNI_CONTAINERID" ip link show
+	ip netns exec "$CNI_CONTAINERID" ip link set "$container_veth_name" name "$cni_iface_name"
+	ip netns exec "$CNI_CONTAINERID" ip link show
+	ip netns exec "$CNI_CONTAINERID" ip addr add "${!cidr_varname}" dev "$cni_iface_name"
+	ip netns exec "$CNI_CONTAINERID" ip link show
+
+	ip link set "$host_veth_name" up
+	ip netns exec "$CNI_CONTAINERID" ip link set "$cni_iface_name" up
+
+	# Setting mac variable for result
+	declare -g "${short_net_name}_iface_mac=$(ip netns exec "$CNI_CONTAINERID" ip link show "$cni_iface_name" | awk '/ether/ {print $2}')"
+
+	# Setting a default route if necessary
+	if ! ip netns exec "$CNI_CONTAINERID" ip route show | grep default && [[ "${!gw_varname}" != "null" && "${!gw_varname}" != "" ]]; then
+		ip netns exec "$CNI_CONTAINERID" ip route add default via "${!gw_varname}" dev "$cni_iface_name"
+	fi
+	ip netns exec "$CNI_CONTAINERID" ip link show
+}
+
 
 # Let's put stdout as a log file
 exec 3>&1
 exec &>> /var/log/metal3-cni.log
+
+if [[ $DEBUG -ne 0 ]]; then
+	set -x;
+fi
 
 readonly network_configuration=$(</dev/stdin)
 case "$CNI_COMMAND" in
@@ -18,10 +62,10 @@ ADD)
 	readonly args=$(jq -r ".args" <<< "$network_configuration")
 
 	if [[ -n "$PROV_CIDR" ]] && [[ -n "$EXT_CIDR" ]]; then
-		readonly prov_iface_cidr="$PROV_CIDR"
+		readonly pro_iface_cidr="$PROV_CIDR"
 		readonly ext_iface_cidr="$EXT_CIDR"
 		if [[ -n "$PROV_GW" ]]; then
-			readonly prov_iface_gw="$PROV_GW"
+			readonly pro_iface_gw="$PROV_GW"
 		else
 			readonly ext_iface_gw="$EXT_GW"
 		fi
@@ -35,13 +79,13 @@ ADD)
 			exit 1
 		fi
 
-		readonly prov_iface_cidr=$(jq -r '.ips[0].address' <<< "$ipam_result")
-		if [[ $prov_iface_cidr =~ ^[0-9]+(\.[0-9]*){3}/[0-9]+$  ]]; then
-			readonly prov_ip_family=4
+		readonly pro_iface_cidr=$(jq -r '.ips[0].address' <<< "$ipam_result")
+		if [[ $pro_iface_cidr =~ ^[0-9]+(\.[0-9]*){3}/[0-9]+$  ]]; then
+			readonly pro_ip_family=4
 		else
-			readonly prov_ip_family=6
+			readonly pro_ip_family=6
 		fi
-		readonly prov_iface_gw=$(jq -r '.ips[0].gateway' <<< "$ipam_result")
+		readonly pro_iface_gw=$(jq -r '.ips[0].gateway' <<< "$ipam_result")
 
 		readonly ext_iface_cidr=$(jq -r '.ips[1].address' <<< "$ipam_result")
 		if [[ $ext_iface_cidr =~ ^[0-9]+(\.[0-9]*){3}/[0-9]+$ ]]; then
@@ -55,71 +99,28 @@ ADD)
 	if [[ -n "$CNI_EXTRA_ARGS" ]]; then
 		eval "$CNI_EXTRA_ARGS"
 	fi
-	readonly prov_ifname="$CNI_IFNAME"
 
 	# Set netns link for iproute
 	mkdir -p /var/run/netns
 	ln -sfT "$CNI_NETNS" "/run/netns/${CNI_CONTAINERID}"
 
 	# Provisioning network
-	readonly tmp_port_name="$(head -c 10 <<< "$CNI_CONTAINERID")"
-	ip link add "m3ph${tmp_port_name}" type veth peer name "m3c${tmp_port_name}"
-	ip link set "m3c${tmp_port_name}" netns "$CNI_CONTAINERID"
-	port_addition_args=("$bridge" "m3ph$tmp_port_name")
-	if [[ -n "$PROV_VLAN" ]]; then
-		port_addition_args+=("tag=$PROV_VLAN")
-	fi
-	ovs-vsctl add-port "${port_addition_args[@]}"
-	ip netns exec "$CNI_CONTAINERID" ip link show
-	ip netns exec "$CNI_CONTAINERID" ip link set "m3c$tmp_port_name" name "$prov_ifname"
-	ip netns exec "$CNI_CONTAINERID" ip link show
-	ip netns exec "$CNI_CONTAINERID" ip addr add "$prov_iface_cidr" dev "$prov_ifname"
-	ip netns exec "$CNI_CONTAINERID" ip link show
-
-	ip netns exec "$CNI_CONTAINERID" ip link set "$prov_ifname" up
-	ip link set "m3ph${tmp_port_name}" up
-	if [[ "$prov_iface_gw" != "null" && "$prov_iface_gw" != "" ]]; then
-		ip netns exec "$CNI_CONTAINERID" ip route add default via "$prov_iface_gw" dev "$prov_ifname"
-	fi
-	ip netns exec "$CNI_CONTAINERID" ip link show
+	readonly pro_ifname="$CNI_IFNAME"
+	connect provisioning "$CNI_IFNAME"
 
 	# External network
-	# Compute bigger ifname
-	[[ $CNI_IFNAME =~ (.*[^0-9])([0-9]+)$ ]] && readonly ext_ifname="${BASH_REMATCH[1]}$((BASH_REMATCH[2] + 1))"
-
-	# Create veth pair and move container end to container netns
-	ip link add "m3eh${tmp_port_name}" type veth peer name "m3c${tmp_port_name}"
-	ip link set "m3c${tmp_port_name}" netns "$CNI_CONTAINERID"
-
-	# Add host side to ovs
-	port_addition_args=("$bridge" "m3eh$tmp_port_name")
-	if [[ -n "$EXT_VLAN" ]]; then
-		port_addition_args+=("tag=$EXT_VLAN")
-	fi
-	ovs-vsctl add-port "${port_addition_args[@]}"
-
-	ip netns exec "$CNI_CONTAINERID" ip link show
-	ip netns exec "$CNI_CONTAINERID" ip link set "m3c$tmp_port_name" name "$ext_ifname"
-	ip netns exec "$CNI_CONTAINERID" ip addr add "$ext_iface_cidr" dev "$ext_ifname"
-
-	ip netns exec "$CNI_CONTAINERID" ip link set "$ext_ifname" up
-	ip link set "m3eh${tmp_port_name}" up
-	if ! ip netns exec "$CNI_CONTAINERID" ip route show | grep default && [[ "$ext_iface_gw" != "null" && "$ext_iface_gw" != "" ]]; then
-		ip netns exec "$CNI_CONTAINERID" ip route add default via "$ext_iface_gw" dev "$ext_ifname"
-	fi
-	ip netns exec "$CNI_CONTAINERID" ip link show
-
+	[[ $CNI_IFNAME =~ (.*[^0-9])([0-9]+)$ ]] && \
+		readonly ext_ifname="${BASH_REMATCH[1]}$((BASH_REMATCH[2] + 1))"
+	connect external "$ext_ifname"
 
 	# Gather macs for results
-	readonly prov_iface_mac="$(ip netns exec "$CNI_CONTAINERID" ip link show "$prov_ifname" | awk '/ether/ {print $2}')"
-	readonly ext_iface_mac="$(ip netns exec "$CNI_CONTAINERID" ip link show "$ext_ifname" | awk '/ether/ {print $2}')"
 	tee >(cat >&3) << EOF  # Making sure that it gets printed both to the log and to the 3rd file descriptor
 {
   "cniVersion": "0.4.0",
   "interfaces": [
     {
-      "name": "$prov_ifname",
-      "mac": "$prov_iface_mac",
+      "name": "$pro_ifname",
+      "mac": "$pro_iface_mac",
       "sandbox": "$CNI_NETNS"
     },
     {
@@ -130,9 +131,9 @@ ADD)
   ],
   "ips": [
     {
-      "version": "$prov_ip_family",
-      "address": "$prov_iface_cidr",
-      "gateway": "$prov_iface_gw",
+      "version": "$pro_ip_family",
+      "address": "$pro_iface_cidr",
+      "gateway": "$pro_iface_gw",
       "interface": 0
     },
     {
@@ -152,6 +153,7 @@ DEL)
 	readonly tmp_port_name="$(head -c 10 <<< "$CNI_CONTAINERID")"
 	ovs-vsctl del-port "$bridge" "m3ph${tmp_port_name}"
 	ovs-vsctl del-port "$bridge" "m3eh${tmp_port_name}"
+	rm "/run/netns/${CNI_CONTAINERID}"
 
 	# Deallocate
 	IFS=":" read -r -a findpaths <<< "$CNI_PATH"
