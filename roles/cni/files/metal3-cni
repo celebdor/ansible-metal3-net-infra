@@ -34,13 +34,43 @@ function connect() {
 	ip netns exec "$CNI_CONTAINERID" ip link set "$cni_iface_name" up
 
 	# Setting mac variable for result
-	declare -g "${short_net_name}_iface_mac=$(ip netns exec "$CNI_CONTAINERID" ip link show "$cni_iface_name" | awk '/ether/ {print $2}')"
+	local cni_iface_mac
+	cni_iface_mac="$(ip netns exec "$CNI_CONTAINERID" ip link show "$cni_iface_name" | awk '/ether/ {print $2}')"
+	declare -r cni_iface_mac
 
 	# Setting a default route if necessary
 	if ! ip netns exec "$CNI_CONTAINERID" ip route show | grep default && [[ "${!gw_varname}" != "null" && "${!gw_varname}" != "" ]]; then
 		ip netns exec "$CNI_CONTAINERID" ip route add default via "${!gw_varname}" dev "$cni_iface_name"
 	fi
 	ip netns exec "$CNI_CONTAINERID" ip link show
+
+	# Store the result
+	if [[ ${!cidr_varname} =~ ^[0-9]+(\.[0-9]*){3}/[0-9]+$  ]]; then
+		declare -r ip_family=4
+	else
+		declare -r ip_family=6
+	fi
+        declare -g -r "${short_net_name}_result=$(cat <<- EOF
+	{
+	  "cniVersion": "0.4.0",
+	  "interfaces": [
+	    {
+	      "name": "$cni_iface_name",
+	      "mac": "$cni_iface_mac",
+	      "sandbox": "$CNI_NETNS"
+	    }
+	  ],
+	  "ips": [
+	    {
+	      "version": "$ip_family",
+	      "address": "${!cidr_varname}",
+	      "gateway": "${!gw_varname}",
+	      "interface": 0
+	    }
+	  ]
+	}
+	EOF
+	)"
 }
 
 
@@ -80,19 +110,9 @@ ADD)
 		fi
 
 		readonly pro_iface_cidr=$(jq -r '.ips[0].address' <<< "$ipam_result")
-		if [[ $pro_iface_cidr =~ ^[0-9]+(\.[0-9]*){3}/[0-9]+$  ]]; then
-			readonly pro_ip_family=4
-		else
-			readonly pro_ip_family=6
-		fi
 		readonly pro_iface_gw=$(jq -r '.ips[0].gateway' <<< "$ipam_result")
 
 		readonly ext_iface_cidr=$(jq -r '.ips[1].address' <<< "$ipam_result")
-		if [[ $ext_iface_cidr =~ ^[0-9]+(\.[0-9]*){3}/[0-9]+$ ]]; then
-			readonly ext_ip_family=4
-		else
-			readonly ext_ip_family=6
-		fi
 		readonly ext_iface_gw=$(jq -r '.ips[1].gateway' <<< "$ipam_result")
 	fi
 
@@ -105,7 +125,6 @@ ADD)
 	ln -sfT "$CNI_NETNS" "/run/netns/${CNI_CONTAINERID}"
 
 	# Provisioning network
-	readonly pro_ifname="$CNI_IFNAME"
 	connect provisioning "$CNI_IFNAME"
 
 	# External network
@@ -113,39 +132,8 @@ ADD)
 		readonly ext_ifname="${BASH_REMATCH[1]}$((BASH_REMATCH[2] + 1))"
 	connect external "$ext_ifname"
 
-	# Gather macs for results
-	tee >(cat >&3) << EOF  # Making sure that it gets printed both to the log and to the 3rd file descriptor
-{
-  "cniVersion": "0.4.0",
-  "interfaces": [
-    {
-      "name": "$pro_ifname",
-      "mac": "$pro_iface_mac",
-      "sandbox": "$CNI_NETNS"
-    },
-    {
-      "name": "$ext_ifname",
-      "mac": "$ext_iface_mac",
-      "sandbox": "$CNI_NETNS"
-    }
-  ],
-  "ips": [
-    {
-      "version": "$pro_ip_family",
-      "address": "$pro_iface_cidr",
-      "gateway": "$pro_iface_gw",
-      "interface": 0
-    },
-    {
-      "version": "$ext_ip_family",
-      "address": "$ext_iface_cidr",
-      "gateway": "$ext_iface_gw",
-      "interface": 1
-    }
-  ]
-}
-EOF
-
+	# Combine outputs
+	jq -n 'reduce inputs as $object ({"cniVersion": "0.4.0"}; ( .interfaces += [$object | .interfaces[] ] | .ips += [$object | .ips[] ] ))' <(echo "$pro_result") <(echo "$ext_result") | tee >(cat >&3)
 ;;
 
 DEL)
