@@ -1,0 +1,19 @@
+---
+- include: redhat_install.yml
+  when: ansible_os_family == 'RedHat'
+
+- include: debian_install.yml
+  when: ansible_os_family == 'Debian'
+
+- name: Install metal3 cni
+  become: yes
+  copy:
+    src: multus-cni
+    dest: /usr/libexec/cni/metal3
+
+- name: Write CNI network config
+  become: yes
+  copy:
+    content: '{{ lookup("template", "87-metal3.conflist.j2") }}'
+    dest: "/etc/cni/net.d/87-metal3-{{ item.name }}.conflist"
+  loop: "{{ networks }}"  # This be done for provisionig (dhcpd), external (dhcpd) and both (coredns)

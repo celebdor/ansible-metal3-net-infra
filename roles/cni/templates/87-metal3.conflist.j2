@@ -1,0 +1,31 @@
+{
+   "cniVersion":"0.4.0",
+   "name":"metal3-dns",
+   "plugins":[
+      {
+         "type":"metal3",
+         "bridge":"metal3",
+         "ipam": {
+            "type":"host-local",
+            "ranges":[
+               [
+                  {
+                     "subnet":"{{ provisioning_cidr }}",
+                     "rangeStart":"{{ provisioning_pool_start }}",
+                     "rangeEnd":"{{ provisioning_pool_end }}",
+                     "gateway":"{{ provisioning_default_gw }}"
+                  }
+               ],
+               [
+                  {
+                     "subnet":"{{ external_cidr }}",
+                     "rangeStart":"{{ external_pool_start }}",
+                     "rangeEnd":"{{ external_pool_end }}",
+                     "gateway":"{{ external_default_gw }}"
+                  }
+               ]
+            ]
+         }
+      }
+   ]
+}
