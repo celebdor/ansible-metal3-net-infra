@@ -37,19 +37,20 @@ function connect() {
 	local cni_iface_mac
 	cni_iface_mac="$(ip netns exec "$CNI_CONTAINERID" ip link show "$cni_iface_name" | awk '/ether/ {print $2}')"
 	declare -r cni_iface_mac
-
+        
+        if [[ ${!cidr_varname} =~ ^[0-9]+(\.[0-9]*){3}/[0-9]+$  ]]; then
+                declare -r ip_family=4
+        else
+                declare -r ip_family=6
+        fi
+	
 	# Setting a default route if necessary
-	if ! ip netns exec "$CNI_CONTAINERID" ip route show | grep default && [[ "${!gw_varname}" != "null" && "${!gw_varname}" != "" ]]; then
+	if ! ip netns exec "$CNI_CONTAINERID" ip -"$ip_family" route show | grep default && [[ "${!gw_varname}" != "null" && "${!gw_varname}" != "" ]]; then
 		ip netns exec "$CNI_CONTAINERID" ip route add default via "${!gw_varname}" dev "$cni_iface_name"
 	fi
 	ip netns exec "$CNI_CONTAINERID" ip link show
 
 	# Store the result
-	if [[ ${!cidr_varname} =~ ^[0-9]+(\.[0-9]*){3}/[0-9]+$  ]]; then
-		declare -r ip_family=4
-	else
-		declare -r ip_family=6
-	fi
         declare -g -r "${short_net_name}_result=$(cat <<- EOF
 	{
 	  "cniVersion": "0.4.0",
